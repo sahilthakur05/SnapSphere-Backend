@@ -5,7 +5,10 @@ const helmet = require("helmet")
 const cookieParser = require("cookie-parser");
 const morgan = require("morgan");
 dotenv.config()
-const connectDB = require("./config/db")
+const connectDB = require("./config/db");
+const errorHandler = require("./middlewares/errorHandler");
+
+
 const app = express()
 
 //Middlewares
@@ -21,7 +24,7 @@ app.use(morgan("dev"))
 app.get("/",(req,res)=>{
     res.json({ success: true, message: "SnapSphere API is running" });
 })
-
+app.use(errorHandler);
 // Connect to database
 connectDB()
 //Start server

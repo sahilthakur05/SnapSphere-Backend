@@ -4,131 +4,116 @@
 
 ---
 
-- [x] **Task 1 — Project Setup & Folder Structure** ✅ COMPLETED
+- [x] ~~Task 1 — Project Setup & Folder Structure~~ ✅
+- [x] ~~Task 2 — Database Connection (MongoDB Atlas)~~ ✅
 
 ---
 
-- [ ] **Task 2 — Database Connection (MongoDB)**
+- [ ] **Task 3 — Error Handling & Response Utils**
 
-> **Why MongoDB?**
-> MongoDB is a NoSQL database — it stores data as JSON-like documents (not tables like SQL).
-> Perfect for social media apps because user profiles, posts, comments etc. all have
-> different shapes of data. It's flexible and fast for read-heavy apps like Instagram.
+> **Why do we need this?**
+> Right now if something goes wrong in your API, Express sends ugly HTML error pages.
+> We want consistent JSON responses like `{ success: false, message: "Something went wrong" }`.
+> This makes it easy for the frontend to handle errors and success responses uniformly.
 
-> **Why Mongoose?**
-> Mongoose is a library that makes working with MongoDB easier. Instead of writing
-> raw database queries, you define a "schema" (a blueprint of your data) and Mongoose
-> handles validation, type-checking, and query building for you.
+### Step 1: Create `utils/ApiError.js`
 
-### Step 1: Make sure MongoDB is installed
-
-Check if MongoDB is running on your machine:
-
-```bash
-mongosh --eval "db.runCommand({ ping: 1 })"
-```
-
-If you see `{ ok: 1 }` — MongoDB is running. If not, install it:
-
-```bash
-brew tap mongodb/brew
-brew install mongodb-community
-brew services start mongodb-community
-```
-
-### Step 2: Create `config/db.js`
-
-This file connects your app to MongoDB. We keep it separate from `server.js`
-to keep things organized (each file does one job).
+A function that creates an error object with a status code — so our error handler
+knows exactly what HTTP status and message to send back.
 
 ```js
-const mongoose = require("mongoose");
-
-const connectDB = async () => {
-  try {
-    const conn = await mongoose.connect(process.env.MONGO_URI);
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-  } catch (error) {
-    console.error(`MongoDB Error: ${error.message}`);
-    process.exit(1); // Stop the app if DB fails — no point running without data
-  }
+const createError = (statusCode, message) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.success = false;
+  return error;
 };
 
-module.exports = connectDB;
+module.exports = createError;
 ```
 
-**What's happening here:**
-- `mongoose.connect()` — connects to the MongoDB URL from your `.env` file
-- `process.exit(1)` — if connection fails, stop the server (can't work without DB)
-- We export the function so `server.js` can use it
+**What's happening:**
+- Creates a normal JavaScript Error and attaches `statusCode` to it
+- `statusCode` — HTTP status like 404, 400, 500
+- `success: false` — so the frontend always knows this is an error
 
-### Step 3: Update `server.js`
+### Step 2: Create `utils/ApiResponse.js`
 
-Add these 2 lines to your `server.js`:
-
-**After** `dotenv.config()` add:
+A helper function to send consistent success responses.
 
 ```js
-const connectDB = require("./config/db");
+const sendResponse = (res, statusCode, data, message = "Success") => {
+  res.status(statusCode).json({ success: true, message, data });
+};
+
+module.exports = sendResponse;
 ```
 
-**Before** `app.listen(...)` add:
+**What's happening:**
+- Takes the Express `res` object and sends a formatted JSON response
+- `data` holds the actual response data (user info, posts, etc.)
+- `message` defaults to "Success" but you can customize it
+
+### Step 3: Create `middlewares/errorHandler.js`
+
+This middleware catches all errors and sends a clean JSON response.
+Express knows it's an error handler because it has 4 parameters `(err, req, res, next)`.
 
 ```js
-// Connect to database
-connectDB();
+const errorHandler = (err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+  const message = err.message || "Internal Server Error";
+
+  console.error(err);
+
+  res.status(statusCode).json({
+    success: false,
+    message,
+  });
+};
+
+module.exports = errorHandler;
 ```
 
-Your `server.js` should now look like this:
+**What's happening:**
+- If the error has a `statusCode` (from our `createError`), use it — otherwise default to 500
+- Logs the error for debugging
+- Sends a clean JSON response to the frontend
+
+### Step 4: Update `server.js`
+
+Add the error handler middleware **after all routes**:
 
 ```js
-const express = require("express");
-const dotenv = require("dotenv");
-const cors = require("cors");
-const helmet = require("helmet");
-const cookieParser = require("cookie-parser");
-const morgan = require("morgan");
+const errorHandler = require("./middlewares/errorHandler");
+```
 
-dotenv.config();
+Add this line at the very end, after all routes but **before** `app.listen()`:
 
-const connectDB = require("./config/db");
+```js
+app.use(errorHandler);
+```
 
-const app = express();
+### Step 5: Test it
 
-// Middlewares
-app.use(helmet());
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
-app.use(morgan("dev"));
+Add a temporary test route in `server.js` (after the existing test route):
 
-// Test route
-app.get("/", (req, res) => {
-  res.json({ success: true, message: "SnapSphere API is running" });
+```js
+const createError = require("./utils/ApiError");
+
+app.get("/test-error", (req, res, next) => {
+  next(createError(400, "This is a test error"));
 });
-
-// Connect to database
-connectDB();
-
-// Start server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
 ```
 
-### Step 4: Test it
+Then visit `http://localhost:3000/test-error` — you should see:
 
-Restart your server (`npm run dev`). You should see:
-
-```
-MongoDB Connected: localhost
-Server running on port 3000
+```json
+{ "success": false, "message": "This is a test error" }
 ```
 
-If you see both messages — Task 2 is done!
+If you see that JSON response — Task 3 is done! Remove the test route after testing.
 
 ---
 
-> ✅ Once done, tell me and I'll add Task 3 (Error Handling & Response Utils).
+> ✅ Once done, tell me and I'll add Task 4 (User Model & Auth Routes).
