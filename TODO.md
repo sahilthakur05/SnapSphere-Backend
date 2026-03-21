@@ -6,114 +6,126 @@
 
 - [x] ~~Task 1 — Project Setup & Folder Structure~~ ✅
 - [x] ~~Task 2 — Database Connection (MongoDB Atlas)~~ ✅
+- [x] ~~Task 3 — Error Handling & Response Utils~~ ✅
 
 ---
 
-- [ ] **Task 3 — Error Handling & Response Utils**
+- [ ] **Task 4 — User Model**
 
-> **Why do we need this?**
-> Right now if something goes wrong in your API, Express sends ugly HTML error pages.
-> We want consistent JSON responses like `{ success: false, message: "Something went wrong" }`.
-> This makes it easy for the frontend to handle errors and success responses uniformly.
+> **Why do we need a User Model?**
+> A model defines the structure of your data in MongoDB. Think of it like a blueprint —
+> it says "a user must have a username, email, password, etc." Mongoose uses this to
+> validate data before saving it to the database.
 
-### Step 1: Create `utils/ApiError.js`
+### Step 1: Install bcryptjs
 
-A function that creates an error object with a status code — so our error handler
-knows exactly what HTTP status and message to send back.
+We need this to hash passwords before saving them (never store plain text passwords!).
 
-```js
-const createError = (statusCode, message) => {
-  const error = new Error(message);
-  error.statusCode = statusCode;
-  error.success = false;
-  return error;
-};
-
-module.exports = createError;
+```bash
+npm install bcryptjs
 ```
 
-**What's happening:**
-- Creates a normal JavaScript Error and attaches `statusCode` to it
-- `statusCode` — HTTP status like 404, 400, 500
-- `success: false` — so the frontend always knows this is an error
+### Step 2: Create `models/User.js`
 
-### Step 2: Create `utils/ApiResponse.js`
-
-A helper function to send consistent success responses.
+This defines what a user looks like in your database.
 
 ```js
-const sendResponse = (res, statusCode, data, message = "Success") => {
-  res.status(statusCode).json({ success: true, message, data });
-};
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
-module.exports = sendResponse;
-```
+const userSchema = new mongoose.Schema(
+  {
+    username: {
+      type: String,
+      required: [true, "Username is required"],
+      unique: true,
+      trim: true,
+      lowercase: true,
+      minlength: [3, "Username must be at least 3 characters"],
+      maxlength: [30, "Username cannot exceed 30 characters"],
+    },
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      unique: true,
+      trim: true,
+      lowercase: true,
+    },
+    password: {
+      type: String,
+      required: [true, "Password is required"],
+      minlength: [6, "Password must be at least 6 characters"],
+      select: false, // Don't return password in queries by default
+    },
+    fullName: {
+      type: String,
+      required: [true, "Full name is required"],
+      trim: true,
+    },
+    bio: {
+      type: String,
+      default: "",
+      maxlength: [150, "Bio cannot exceed 150 characters"],
+    },
+    profilePicture: {
+      type: String,
+      default: "",
+    },
+    followers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    following: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    isPrivate: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  { timestamps: true }
+);
 
-**What's happening:**
-- Takes the Express `res` object and sends a formatted JSON response
-- `data` holds the actual response data (user info, posts, etc.)
-- `message` defaults to "Success" but you can customize it
-
-### Step 3: Create `middlewares/errorHandler.js`
-
-This middleware catches all errors and sends a clean JSON response.
-Express knows it's an error handler because it has 4 parameters `(err, req, res, next)`.
-
-```js
-const errorHandler = (err, req, res, next) => {
-  const statusCode = err.statusCode || 500;
-  const message = err.message || "Internal Server Error";
-
-  console.error(err);
-
-  res.status(statusCode).json({
-    success: false,
-    message,
-  });
-};
-
-module.exports = errorHandler;
-```
-
-**What's happening:**
-- If the error has a `statusCode` (from our `createError`), use it — otherwise default to 500
-- Logs the error for debugging
-- Sends a clean JSON response to the frontend
-
-### Step 4: Update `server.js`
-
-Add the error handler middleware **after all routes**:
-
-```js
-const errorHandler = require("./middlewares/errorHandler");
-```
-
-Add this line at the very end, after all routes but **before** `app.listen()`:
-
-```js
-app.use(errorHandler);
-```
-
-### Step 5: Test it
-
-Add a temporary test route in `server.js` (after the existing test route):
-
-```js
-const createError = require("./utils/ApiError");
-
-app.get("/test-error", (req, res, next) => {
-  next(createError(400, "This is a test error"));
+// Hash password before saving
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
 });
+
+// Compare password method
+userSchema.methods.comparePassword = async function (candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+module.exports = mongoose.model("User", userSchema);
 ```
 
-Then visit `http://localhost:3000/test-error` — you should see:
+**What's happening:**
+- `userSchema` — defines all the fields a user can have with validation rules
+- `select: false` on password — when you query users, password won't be included unless you explicitly ask for it
+- `followers/following` — arrays of references to other User documents (for social features)
+- `timestamps: true` — automatically adds `createdAt` and `updatedAt` fields
+- `pre("save")` — a middleware that runs before every save. It hashes the password so we never store plain text
+- `comparePassword` — a method to check if a login password matches the hashed one in the database
 
-```json
-{ "success": false, "message": "This is a test error" }
+### Step 3: Test it
+
+No route to test yet — we'll use this model in Task 5 (Auth Routes). For now, just make sure
+your server still starts without errors after creating the model:
+
+```bash
+npm run dev
 ```
 
-If you see that JSON response — Task 3 is done! Remove the test route after testing.
+If the server starts with no errors — Task 4 is done!
 
 ---
 
-> ✅ Once done, tell me and I'll add Task 4 (User Model & Auth Routes).
+> ✅ Once done, tell me and I'll add Task 5 (Auth Routes — Register, Login, Logout).
