@@ -1,0 +1,34 @@
+const express = require("express")
+const dotenv = require("dotenv")
+const cors = require("cors")
+const helmet = require("helmet")
+const cookieParser = require("cookie-parser");
+const morgan = require("morgan");
+dotenv.config()
+const connectDB = require("./config/db")
+const app = express()
+
+//Middlewares
+app.use(helmet())
+app.use(cors({origin:true,credentials:true}))
+app.use(express.json())
+app.use(express.urlencoded({extended:true}))
+app.use(cookieParser())
+app.use(morgan("dev"))
+
+
+// test route
+app.get("/",(req,res)=>{
+    res.json({ success: true, message: "SnapSphere API is running" });
+})
+
+// Connect to database
+connectDB()
+//Start server
+
+const PORT = process.env.PORT||5000
+
+app.listen(PORT,()=>{
+    console.log(`Server running on port ${PORT}`);
+    
+})
