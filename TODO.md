@@ -7,125 +7,208 @@
 - [x] ~~Task 1 — Project Setup & Folder Structure~~ ✅
 - [x] ~~Task 2 — Database Connection (MongoDB Atlas)~~ ✅
 - [x] ~~Task 3 — Error Handling & Response Utils~~ ✅
+- [x] ~~Task 4 — User Model~~ ✅
 
 ---
 
-- [ ] **Task 4 — User Model**
+- [ ] **Task 5 — Auth Routes (Register, Login, Logout)**
 
-> **Why do we need a User Model?**
-> A model defines the structure of your data in MongoDB. Think of it like a blueprint —
-> it says "a user must have a username, email, password, etc." Mongoose uses this to
-> validate data before saving it to the database.
+> **Why Auth Routes?**
+> These are the first real API endpoints. Users need to create an account (register),
+> sign in (login), and sign out (logout). We use JWT (JSON Web Tokens) to keep users
+> logged in — a token is sent back after login and stored in a cookie.
 
-### Step 1: Install bcryptjs
-
-We need this to hash passwords before saving them (never store plain text passwords!).
+### Step 1: Install jsonwebtoken
 
 ```bash
-npm install bcryptjs
+npm install jsonwebtoken
 ```
 
-### Step 2: Create `models/User.js`
+### Step 2: Create `utils/generateToken.js`
 
-This defines what a user looks like in your database.
+A helper function that creates a JWT and sets it as an HTTP-only cookie.
 
 ```js
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
-const userSchema = new mongoose.Schema(
-  {
-    username: {
-      type: String,
-      required: [true, "Username is required"],
-      unique: true,
-      trim: true,
-      lowercase: true,
-      minlength: [3, "Username must be at least 3 characters"],
-      maxlength: [30, "Username cannot exceed 30 characters"],
-    },
-    email: {
-      type: String,
-      required: [true, "Email is required"],
-      unique: true,
-      trim: true,
-      lowercase: true,
-    },
-    password: {
-      type: String,
-      required: [true, "Password is required"],
-      minlength: [6, "Password must be at least 6 characters"],
-      select: false, // Don't return password in queries by default
-    },
-    fullName: {
-      type: String,
-      required: [true, "Full name is required"],
-      trim: true,
-    },
-    bio: {
-      type: String,
-      default: "",
-      maxlength: [150, "Bio cannot exceed 150 characters"],
-    },
-    profilePicture: {
-      type: String,
-      default: "",
-    },
-    followers: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
-    following: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
-    isPrivate: {
-      type: Boolean,
-      default: false,
-    },
-  },
-  { timestamps: true }
-);
+const generateToken = (res, userId) => {
+  const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE,
+  });
 
-// Hash password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
+  res.cookie("token", token, {
+    httpOnly: true, // Can't be accessed by JavaScript (prevents XSS)
+    secure: process.env.NODE_ENV === "production", // HTTPS only in production
+    sameSite: "strict", // Prevents CSRF attacks
+    maxAge: 15 * 60 * 1000, // 15 minutes in milliseconds
+  });
 
-// Compare password method
-userSchema.methods.comparePassword = async function (candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+  return token;
 };
 
-module.exports = mongoose.model("User", userSchema);
+module.exports = generateToken;
 ```
 
 **What's happening:**
-- `userSchema` — defines all the fields a user can have with validation rules
-- `select: false` on password — when you query users, password won't be included unless you explicitly ask for it
-- `followers/following` — arrays of references to other User documents (for social features)
-- `timestamps: true` — automatically adds `createdAt` and `updatedAt` fields
-- `pre("save")` — a middleware that runs before every save. It hashes the password so we never store plain text
-- `comparePassword` — a method to check if a login password matches the hashed one in the database
+- `jwt.sign()` — creates a token with the user's ID baked in
+- `httpOnly: true` — the cookie can't be read by frontend JavaScript (security!)
+- `secure` — only sends cookie over HTTPS in production
+- `sameSite: "strict"` — cookie won't be sent with cross-site requests
+- Token expires in 15 minutes (from your `.env`)
 
-### Step 3: Test it
+### Step 3: Create `controllers/authController.js`
 
-No route to test yet — we'll use this model in Task 5 (Auth Routes). For now, just make sure
-your server still starts without errors after creating the model:
+This file contains the actual logic for register, login, and logout.
 
-```bash
-npm run dev
+```js
+const User = require("../models/User");
+const createError = require("../utils/ApiError");
+const sendResponse = require("../utils/ApiResponse");
+const generateToken = require("../utils/generateToken");
+
+// Register
+const register = async (req, res, next) => {
+  const { username, email, password, fullName } = req.body;
+
+  // Check if user already exists
+  const userExists = await User.findOne({ $or: [{ email }, { username }] });
+  if (userExists) {
+    return next(createError(400, "User with this email or username already exists"));
+  }
+
+  // Create user
+  const user = await User.create({ username, email, password, fullName });
+
+  // Generate token
+  const token = generateToken(res, user._id);
+
+  sendResponse(res, 201, {
+    _id: user._id,
+    username: user.username,
+    email: user.email,
+    fullName: user.fullName,
+    token,
+  }, "User registered successfully");
+};
+
+// Login
+const login = async (req, res, next) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return next(createError(400, "Please provide email and password"));
+  }
+
+  // Find user and include password (we set select: false in the model)
+  const user = await User.findOne({ email }).select("+password");
+  if (!user) {
+    return next(createError(401, "Invalid email or password"));
+  }
+
+  // Check password
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) {
+    return next(createError(401, "Invalid email or password"));
+  }
+
+  // Generate token
+  const token = generateToken(res, user._id);
+
+  sendResponse(res, 200, {
+    _id: user._id,
+    username: user.username,
+    email: user.email,
+    fullName: user.fullName,
+    token,
+  }, "Login successful");
+};
+
+// Logout
+const logout = async (req, res) => {
+  res.cookie("token", "", {
+    httpOnly: true,
+    expires: new Date(0), // Expire immediately
+  });
+
+  sendResponse(res, 200, null, "Logged out successfully");
+};
+
+module.exports = { register, login, logout };
 ```
 
-If the server starts with no errors — Task 4 is done!
+**What's happening:**
+- **register** — checks if user exists, creates user, returns token
+- **login** — finds user by email, compares password, returns token
+- **logout** — clears the cookie by setting it to expire immediately
+- We use `select("+password")` in login because password is hidden by default
+- Errors are passed to `next()` so our `errorHandler` catches them
+
+### Step 4: Create `routes/authRoutes.js`
+
+This maps URLs to controller functions.
+
+```js
+const express = require("express");
+const { register, login, logout } = require("../controllers/authController");
+
+const router = express.Router();
+
+router.post("/register", register);
+router.post("/login", login);
+router.post("/logout", logout);
+
+module.exports = router;
+```
+
+### Step 5: Update `server.js`
+
+Add the auth routes. After your test route, add:
+
+```js
+const authRoutes = require("./routes/authRoutes");
+
+app.use("/api/auth", authRoutes);
+```
+
+This means:
+- `POST /api/auth/register` — register a new user
+- `POST /api/auth/login` — login
+- `POST /api/auth/logout` — logout
+
+### Step 6: Test with Postman or Thunder Client
+
+**Test Register:**
+- Method: `POST`
+- URL: `http://localhost:3000/api/auth/register`
+- Body (JSON):
+```json
+{
+  "username": "sahil",
+  "email": "sahil@test.com",
+  "password": "test123",
+  "fullName": "Sahil Thakur"
+}
+```
+
+You should get back a success response with user data and a token.
+
+**Test Login:**
+- Method: `POST`
+- URL: `http://localhost:3000/api/auth/login`
+- Body (JSON):
+```json
+{
+  "email": "sahil@test.com",
+  "password": "test123"
+}
+```
+
+**Test Logout:**
+- Method: `POST`
+- URL: `http://localhost:3000/api/auth/logout`
+
+If all three work — Task 5 is done!
 
 ---
 
-> ✅ Once done, tell me and I'll add Task 5 (Auth Routes — Register, Login, Logout).
+> ✅ Once done, tell me and I'll add Task 6 (Auth Middleware — Protect Routes).

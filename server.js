@@ -8,7 +8,7 @@ dotenv.config()
 const connectDB = require("./config/db");
 const errorHandler = require("./middlewares/errorHandler");
 
-
+const authRoutes = require("./routes/authRoutes");
 const app = express()
 
 //Middlewares
@@ -19,7 +19,7 @@ app.use(express.urlencoded({extended:true}))
 app.use(cookieParser())
 app.use(morgan("dev"))
 
-
+app.use("/api/auth", authRoutes);
 // test route
 app.get("/",(req,res)=>{
     res.json({ success: true, message: "SnapSphere API is running" });
