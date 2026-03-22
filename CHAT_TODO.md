@@ -161,10 +161,159 @@ Add these new reducers (not async thunks — these are triggered by socket event
 
 ---
 
-## ORDER OF IMPLEMENTATION
-1. Backend: Steps 1-5 (socket server setup)
-2. Frontend: Steps 7-8 (socket client setup)
-3. Frontend: Steps 9-11 (connect + listeners)
-4. Frontend: Steps 12-14 (update UI components)
-5. Step 6: Real-time notifications (optional, do last)
-6. Test everything with two browser tabs
+---
+
+## PHASE 1: Backend Socket Server Setup
+
+### Task 1: Install Socket.IO
+- [ ] Run `npm install socket.io` in `SnapSphere-Backend/`
+
+### Task 2: Create `socket/socketManager.js`
+- [ ] Create folder `socket/`
+- [ ] Create file `socket/socketManager.js`
+- [ ] Create `onlineUsers` Map to track `userId → socketId`
+- [ ] Export `initSocket(server)` function that:
+  - Creates new `Server(server, { cors: { origin: process.env.FRONTEND_URL, credentials: true } })`
+  - On `"connection"` event: reads `socket.handshake.query.userId`, adds to `onlineUsers` map, emits `"onlineUsers"` list to all
+  - On `"disconnect"` event: removes from `onlineUsers` map, emits `"onlineUsers"` list to all
+  - Calls `chatHandler(io, socket)` for chat events (create in Task 3)
+- [ ] Export `getIO()` function that returns the `io` instance
+- [ ] Export `getOnlineUsers()` function that returns the `onlineUsers` Map
+
+### Task 3: Create `socket/chatHandler.js`
+- [ ] Create file `socket/chatHandler.js`
+- [ ] Export function `chatHandler(io, socket)` that registers these events:
+- [ ] **`"sendMessage"`** handler `({ recipientId, text })`:
+  - Get `userId` from `socket.handshake.query.userId`
+  - Validate recipientId and text exist
+  - Create message in DB: `Message.create({ sender: userId, recipient: recipientId, text })`
+  - Format the saved message: `{ id, senderId, text, storyImage: null, read: false, createdAt }`
+  - Emit `"messageSent"` back to sender socket with formatted message
+  - If recipient is online (check `onlineUsers.get(recipientId)`), emit `"newMessage"` to their socket
+- [ ] **`"typing"`** handler `({ recipientId })`:
+  - Get sender's userId
+  - If recipient online, emit `"userTyping"` with `{ userId }` to their socket
+- [ ] **`"stopTyping"`** handler `({ recipientId })`:
+  - If recipient online, emit `"userStopTyping"` with `{ userId }` to their socket
+- [ ] **`"markRead"`** handler `({ senderId })`:
+  - Get current userId
+  - Run `Message.updateMany({ sender: senderId, recipient: userId, read: false }, { read: true })`
+  - If sender online, emit `"messagesRead"` with `{ readBy: userId }` to their socket
+
+### Task 4: Modify `server.js`
+- [ ] Add imports at top:
+  ```js
+  const http = require("http");
+  const { initSocket } = require("./socket/socketManager");
+  ```
+- [ ] After `const app = express();` add:
+  ```js
+  const server = http.createServer(app);
+  ```
+- [ ] Before `server.listen()`, add:
+  ```js
+  initSocket(server);
+  ```
+- [ ] Change `app.listen(PORT, ...)` to `server.listen(PORT, ...)`
+
+### Task 5: Test Backend Socket
+- [ ] Start the backend server locally
+- [ ] Open browser console and test connection:
+  ```js
+  const socket = io("http://localhost:3000", { query: { userId: "testuser123" } });
+  socket.on("connect", () => console.log("Connected!", socket.id));
+  socket.on("onlineUsers", (users) => console.log("Online:", users));
+  ```
+- [ ] Verify no errors in server console
+- [ ] Commit and push to `feature/realtime-chat` branch
+
+---
+
+## PHASE 2: Frontend Socket Client Setup
+
+### Task 6: Install Socket.IO Client
+- [ ] Run `npm install socket.io-client` in `SnapSphere/`
+
+### Task 7: Create `src/lib/socket.ts`
+- [ ] Create file with:
+  - `let socket: Socket | null = null`
+  - `connectSocket(userId: string)` → creates `io(VITE_SOCKET_URL, { query: { userId }, withCredentials: true })`, stores in `socket`
+  - `disconnectSocket()` → calls `socket.disconnect()`, sets `socket = null`
+  - `getSocket()` → returns `socket`
+
+### Task 8: Connect Socket on Auth
+- [ ] In `AppRoutes.tsx` (or `App.tsx`):
+  - Import `connectSocket` and `disconnectSocket`
+  - Add `useEffect` that watches `isAuthenticated` and `user.id`
+  - When authenticated → call `connectSocket(user.id)`
+  - When logged out → call `disconnectSocket()`
+  - Cleanup on unmount → `disconnectSocket()`
+
+---
+
+## PHASE 3: Wire Up Redux + Listeners
+
+### Task 9: Update `messageSlice.ts`
+- [ ] Add to state: `onlineUsers: string[]` (default `[]`), `typingUsers: Record<string, boolean>` (default `{}`)
+- [ ] Add reducer: `receiveMessage` — push message to `currentChat.messages` if chat open with that sender, update `conversations` list's lastMessage, increment `totalUnread` if chat not open
+- [ ] Add reducer: `messageSentViaSocket` — push message to `currentChat.messages`
+- [ ] Add reducer: `updateTypingStatus` — set `typingUsers[userId] = typing`
+- [ ] Add reducer: `updateOnlineUsers` — set `onlineUsers` array
+- [ ] Add reducer: `markMessagesAsRead` — update `read: true` on messages in currentChat
+- [ ] Export all new actions
+
+### Task 10: Create `src/hooks/useSocketListeners.ts`
+- [ ] Import `getSocket` and all Redux actions
+- [ ] In a `useEffect`, get socket and register listeners:
+  - `"newMessage"` → dispatch `receiveMessage(message)`
+  - `"messageSent"` → dispatch `messageSentViaSocket(message)`
+  - `"userTyping"` → dispatch `updateTypingStatus({ userId, typing: true })`
+  - `"userStopTyping"` → dispatch `updateTypingStatus({ userId, typing: false })`
+  - `"onlineUsers"` → dispatch `updateOnlineUsers(userIds)`
+  - `"messagesRead"` → dispatch `markMessagesAsRead(data)`
+- [ ] Return cleanup that removes all listeners
+- [ ] Use this hook in `AppRoutes.tsx` (call it once when authenticated)
+
+---
+
+## PHASE 4: Update UI Components
+
+### Task 11: Update `ChatPage.tsx`
+- [ ] Import `getSocket`
+- [ ] **Send via socket**: Replace `dispatch(sendMessage(...))` with `getSocket()?.emit("sendMessage", { recipientId, text })`
+- [ ] **Typing indicator**:
+  - On input `onChange` → emit `"typing"` (debounce 500ms)
+  - On blur or empty input → emit `"stopTyping"`
+  - Read `typingUsers[partnerId]` from Redux, show "typing..." text below header
+- [ ] **Mark read**: On mount, emit `"markRead"` with `{ senderId: userId }`
+- [ ] Auto-scroll still works (already have `bottomRef`)
+
+### Task 12: Update `MessagesPage.tsx`
+- [ ] Read `onlineUsers` from Redux
+- [ ] Show green dot on avatar if `onlineUsers.includes(conv.user.id)`
+- [ ] Conversations update automatically via `receiveMessage` reducer
+
+### Task 13: Update `Navbar.tsx` / `BottomNav.tsx`
+- [ ] Unread badge already reads from Redux `totalUnread`
+- [ ] Verify it updates when `receiveMessage` increments `totalUnread`
+- [ ] No code change needed if reducer handles it correctly
+
+---
+
+## PHASE 5: Optional Enhancements
+
+### Task 14: Real-Time Notifications
+- [ ] In backend controllers (like, comment, follow), import `getIO()` and `getOnlineUsers()`
+- [ ] After creating a notification in DB, emit `"newNotification"` to target user's socket
+- [ ] In frontend `useSocketListeners`, listen for `"newNotification"` → dispatch to notification slice + show toast
+
+### Task 15: Final Testing
+- [ ] Open two browsers (or incognito) with different accounts
+- [ ] Send message from A → appears instantly on B (no refresh)
+- [ ] Typing indicator shows when A types in chat with B
+- [ ] Green dot shows next to online users in messages list
+- [ ] Unread badge updates live in navbar
+- [ ] Close tab → user goes offline → green dot disappears
+- [ ] Refresh page → socket reconnects automatically
+- [ ] Test on mobile browser
+- [ ] Commit, push, create PR to merge `feature/realtime-chat` → `main`
