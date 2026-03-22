@@ -6,6 +6,7 @@ const Notification = require("../models/Notification");
 const createError = require("../utils/ApiError");
 const sendResponse = require("../utils/ApiResponse");
 const cloudinary = require("../config/cloudinary");
+const { EXPLORE_POSTS_LIMIT } = require("../config/constants");
 
 // GET /posts/feed?page=1&limit=10
 const getFeed = async (req, res, next) => {
@@ -69,7 +70,7 @@ const getExplorePosts = async (req, res, next) => {
 
   const posts = await Post.find({ user: { $nin: following } })
     .sort({ createdAt: -1 })
-    .limit(50)
+    .limit(EXPLORE_POSTS_LIMIT)
     .select("image likes")
     .lean();
 

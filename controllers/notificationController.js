@@ -1,15 +1,25 @@
 const Notification = require("../models/Notification");
 const sendResponse = require("../utils/ApiResponse");
 
-// GET /notifications
+// GET /notifications?page=1&limit=20
 const getNotifications = async (req, res, next) => {
-  const notifications = await Notification.find({ recipient: req.user._id })
-    .populate("sender", "username profilePicture")
-    .populate("story", "image")
-    .sort({ createdAt: -1 })
-    .lean();
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+  const skip = (page - 1) * limit;
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const [notifications, unreadCount] = await Promise.all([
+    Notification.find({ recipient: req.user._id })
+      .populate("sender", "username profilePicture")
+      .populate("story", "image")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit + 1)
+      .lean(),
+    Notification.countDocuments({ recipient: req.user._id, read: false }),
+  ]);
+
+  const hasMore = notifications.length > limit;
+  if (hasMore) notifications.pop();
 
   const formatted = notifications.map((n) => ({
     id: n._id,
@@ -25,7 +35,7 @@ const getNotifications = async (req, res, next) => {
     createdAt: n.createdAt,
   }));
 
-  sendResponse(res, 200, { notifications: formatted, unreadCount }, "Notifications fetched successfully");
+  sendResponse(res, 200, { notifications: formatted, unreadCount, hasMore }, "Notifications fetched successfully");
 };
 
 // PUT /notifications/read — mark all as read

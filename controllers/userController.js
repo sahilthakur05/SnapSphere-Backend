@@ -1,4 +1,5 @@
 const User = require("../models/User");
+const { PROFILE_IMAGE_SIZE } = require("../config/constants");
 const Post = require("../models/Post");
 const Notification = require("../models/Notification");
 const createError = require("../utils/ApiError");
@@ -21,7 +22,7 @@ const updateMe = async (req, res, next) => {
   if (req.file) {
     const result = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { folder: "snapsphere/profiles", transformation: [{ width: 400, height: 400, crop: "fill" }] },
+        { folder: "snapsphere/profiles", transformation: [{ width: PROFILE_IMAGE_SIZE, height: PROFILE_IMAGE_SIZE, crop: "fill" }] },
         (error, result) => {
           if (error) reject(error);
           else resolve(result);
@@ -176,8 +177,11 @@ const toggleFollow = async (req, res, next) => {
   }
 };
 
-// GET /users/:username/followers
+// GET /users/:username/followers?page=1&limit=30
 const getFollowers = async (req, res, next) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 30));
+
   const user = await User.findOne({ username: req.params.username })
     .populate("followers", "username fullName profilePicture")
     .lean();
@@ -186,18 +190,26 @@ const getFollowers = async (req, res, next) => {
     return next(createError(404, "User not found"));
   }
 
-  const users = user.followers.map((u) => ({
+  const start = (page - 1) * limit;
+  const sliced = user.followers.slice(start, start + limit + 1);
+  const hasMore = sliced.length > limit;
+  if (hasMore) sliced.pop();
+
+  const users = sliced.map((u) => ({
     id: u._id,
     username: u.username,
     fullName: u.fullName,
     avatar: u.profilePicture,
   }));
 
-  sendResponse(res, 200, { users }, "Followers fetched successfully");
+  sendResponse(res, 200, { users, hasMore, total: user.followers.length }, "Followers fetched successfully");
 };
 
-// GET /users/:username/following
+// GET /users/:username/following?page=1&limit=30
 const getFollowing = async (req, res, next) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 30));
+
   const user = await User.findOne({ username: req.params.username })
     .populate("following", "username fullName profilePicture")
     .lean();
@@ -206,14 +218,19 @@ const getFollowing = async (req, res, next) => {
     return next(createError(404, "User not found"));
   }
 
-  const users = user.following.map((u) => ({
+  const start = (page - 1) * limit;
+  const sliced = user.following.slice(start, start + limit + 1);
+  const hasMore = sliced.length > limit;
+  if (hasMore) sliced.pop();
+
+  const users = sliced.map((u) => ({
     id: u._id,
     username: u.username,
     fullName: u.fullName,
     avatar: u.profilePicture,
   }));
 
-  sendResponse(res, 200, { users }, "Following fetched successfully");
+  sendResponse(res, 200, { users, hasMore, total: user.following.length }, "Following fetched successfully");
 };
 
 module.exports = {

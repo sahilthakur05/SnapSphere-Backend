@@ -56,10 +56,13 @@ const getConversations = async (req, res, next) => {
   sendResponse(res, 200, formatted, "Conversations fetched");
 };
 
-// GET /messages/:userId — get messages with a specific user
+// GET /messages/:userId?page=1&limit=30 — get messages with a specific user
 const getMessages = async (req, res, next) => {
   const userId = req.user._id;
   const partnerId = req.params.userId;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 30));
+  const skip = (page - 1) * limit;
 
   const partner = await User.findById(partnerId).select("username fullName profilePicture").lean();
   if (!partner) {
@@ -72,15 +75,25 @@ const getMessages = async (req, res, next) => {
       { sender: partnerId, recipient: userId },
     ],
   })
-    .sort({ createdAt: 1 })
+    .sort({ createdAt: -1 }) // newest first for pagination
+    .skip(skip)
+    .limit(limit + 1)
     .populate("story", "image")
     .lean();
 
-  // Mark unread messages as read
-  await Message.updateMany(
-    { sender: partnerId, recipient: userId, read: false },
-    { read: true }
-  );
+  const hasMore = messages.length > limit;
+  if (hasMore) messages.pop();
+
+  // Reverse to show oldest first in the page
+  messages.reverse();
+
+  // Mark unread messages as read (only on first page load)
+  if (page === 1) {
+    await Message.updateMany(
+      { sender: partnerId, recipient: userId, read: false },
+      { read: true }
+    );
+  }
 
   const formatted = messages.map((m) => ({
     id: m._id,
@@ -100,6 +113,7 @@ const getMessages = async (req, res, next) => {
       avatar: partner.profilePicture,
     },
     messages: formatted,
+    hasMore,
   }, "Messages fetched");
 };
 
