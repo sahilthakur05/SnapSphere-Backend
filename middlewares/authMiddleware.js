@@ -4,6 +4,10 @@ const createError = require("../utils/ApiError");
 
 const protect = async (req, res, next) => {
   let token = req.cookies.token;
+  // Also check Authorization header for cross-domain deployments
+  if (!token && req.headers.authorization?.startsWith("Bearer ")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
   if (!token) {
     return next(createError(401, "Not authorized, no token"));
   }
