@@ -7,6 +7,8 @@ const morgan = require("morgan");
 dotenv.config();
 const connectDB = require("./config/db");
 const errorHandler = require("./middlewares/errorHandler");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./config/swagger");
 
 // Route imports
 const authRoutes = require("./routes/authRoutes");
@@ -24,6 +26,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
+
+// Swagger docs
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: ".swagger-ui .topbar { display: none }",
+  customSiteTitle: "SnapSphere API Docs",
+}));
 
 // Routes
 app.use("/api/auth", authRoutes);
