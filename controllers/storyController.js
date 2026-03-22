@@ -14,6 +14,7 @@ const getStories = async (req, res, next) => {
     expiresAt: { $gt: new Date() },
   })
     .populate("user", "username profilePicture")
+    .populate("likes", "username profilePicture")
     .sort({ createdAt: -1 })
     .lean();
 
@@ -33,6 +34,7 @@ const getStories = async (req, res, next) => {
       id: s._id,
       image: s.image,
       caption: s.caption,
+      likes: (s.likes || []).map((u) => ({ id: u._id, username: u.username, avatar: u.profilePicture })),
       createdAt: s.createdAt,
     });
   }
