@@ -47,6 +47,7 @@ const getConversations = async (req, res, next) => {
         lastMessage: {
           id: msg._id,
           text: msg.text,
+          image: msg.image || null,
           senderId: msg.sender._id,
           storyImage: msg.story?.image || null,
           createdAt: msg.createdAt,
@@ -89,6 +90,7 @@ const getMessages = async (req, res, next) => {
     id: m._id,
     senderId: m.sender.toString(),
     text: m.text,
+    image: m.image || null,
     storyImage: m.story?.image || null,
     read: m.read,
     createdAt: m.createdAt,

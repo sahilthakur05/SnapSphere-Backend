@@ -12,6 +12,7 @@ const initSocket = (server) => {
     },
     transports: ["websocket", "polling"],
     allowUpgrades: true,
+    maxHttpBufferSize: 5e6, // 5MB for image uploads
     pingTimeout: 60000,
     pingInterval: 25000,
   });

@@ -14,8 +14,12 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: [true, "Message text is required"],
       maxlength: [1000, "Message cannot exceed 1000 characters"],
+      default: "",
+    },
+    image: {
+      type: String,
+      default: null,
     },
     story: {
       type: mongoose.Schema.Types.ObjectId,
