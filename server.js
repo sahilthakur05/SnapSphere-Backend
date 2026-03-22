@@ -16,6 +16,7 @@ const userRoutes = require("./routes/userRoutes");
 const postRoutes = require("./routes/postRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const storyRoutes = require("./routes/storyRoutes");
+const messageRoutes = require("./routes/messageRoutes");
 
 const app = express();
 
@@ -27,8 +28,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 
-// Swagger docs
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+// Swagger docs (disable helmet CSP for this route so Swagger UI works)
+app.use("/api-docs", (req, res, next) => {
+  res.removeHeader("Content-Security-Policy");
+  next();
+}, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customCss: ".swagger-ui .topbar { display: none }",
   customSiteTitle: "SnapSphere API Docs",
 }));
@@ -39,6 +43,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/stories", storyRoutes);
+app.use("/api/messages", messageRoutes);
 
 // Health check
 app.get("/", (req, res) => {

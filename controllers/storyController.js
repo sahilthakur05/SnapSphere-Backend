@@ -1,4 +1,6 @@
 const Story = require("../models/Story");
+const Notification = require("../models/Notification");
+const Message = require("../models/Message");
 const createError = require("../utils/ApiError");
 const sendResponse = require("../utils/ApiResponse");
 const cloudinary = require("../config/cloudinary");
@@ -78,4 +80,56 @@ const createStory = async (req, res, next) => {
   }, "Story created successfully");
 };
 
-module.exports = { getStories, createStory };
+// PUT /stories/:storyId/like — like a story (sends notification)
+const likeStory = async (req, res, next) => {
+  const story = await Story.findById(req.params.storyId);
+  if (!story) {
+    return next(createError(404, "Story not found"));
+  }
+
+  // Don't notify if liking own story
+  if (story.user.toString() !== req.user._id.toString()) {
+    await Notification.create({
+      recipient: story.user,
+      sender: req.user._id,
+      type: "like",
+      post: null,
+    });
+  }
+
+  sendResponse(res, 200, { message: "Story liked" }, "Story liked");
+};
+
+// POST /stories/:storyId/reply — reply to a story (creates a message)
+const replyToStory = async (req, res, next) => {
+  const { text } = req.body || {};
+  if (!text) {
+    return next(createError(400, "Reply text is required"));
+  }
+
+  const story = await Story.findById(req.params.storyId);
+  if (!story) {
+    return next(createError(404, "Story not found"));
+  }
+
+  const message = await Message.create({
+    sender: req.user._id,
+    recipient: story.user,
+    text,
+    story: story._id,
+  });
+
+  const populated = await Message.findById(message._id)
+    .populate("sender", "username profilePicture")
+    .lean();
+
+  sendResponse(res, 201, {
+    id: populated._id,
+    sender: { id: populated.sender._id, username: populated.sender.username, avatar: populated.sender.profilePicture },
+    text: populated.text,
+    storyId: populated.story,
+    createdAt: populated.createdAt,
+  }, "Reply sent");
+};
+
+module.exports = { getStories, createStory, likeStory, replyToStory };
