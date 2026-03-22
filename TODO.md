@@ -15,119 +15,197 @@
 
 ---
 
-- [ ] **Task 6 — Auth Middleware (Protect Routes)**
+- [x] ~~Task 6 — Auth Middleware (Protect Routes)~~ ✅
 
-> **Why Auth Middleware?**
-> Right now anyone can hit any endpoint. We need a middleware that checks if the user
-> has a valid JWT token before allowing access to protected routes. This middleware will
-> sit in front of any route that requires authentication.
+---
 
-### Step 1: Create `middlewares/authMiddleware.js`
+- [ ] **Task 7 — User Profile (Update Profile & Upload Profile Picture)**
 
-This middleware reads the JWT from the cookie, verifies it, and attaches the user to `req.user`.
+> **Why User Profile?**
+> Users need to update their profile info (full name, bio, username) and upload a profile
+> picture. We'll use **Cloudinary** to store images in the cloud and **Multer** to handle
+> file uploads in Express.
+
+### Step 1: Install dependencies
+
+```bash
+npm install multer cloudinary
+```
+
+- **multer** — middleware for handling file uploads (`multipart/form-data`)
+- **cloudinary** — cloud service to store and serve images
+
+### Step 2: Set up Cloudinary
+
+Add these to your `.env` file (get values from your Cloudinary dashboard):
+
+```
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+```
+
+Create `config/cloudinary.js`:
 
 ```js
-const jwt = require("jsonwebtoken");
-const User = require("../models/User");
-const createError = require("../utils/ApiError");
+const cloudinary = require("cloudinary").v2;
 
-const protect = async (req, res, next) => {
-  let token = req.cookies.token;
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-  if (!token) {
-    return next(createError(401, "Not authorized, no token"));
-  }
+module.exports = cloudinary;
+```
 
-  try {
-    // Verify the token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+### Step 3: Create `middlewares/upload.js`
 
-    // Attach user to request (exclude password)
-    req.user = await User.findById(decoded.id);
+This configures Multer to store uploaded files temporarily in memory (as a buffer).
 
-    if (!req.user) {
-      return next(createError(401, "User not found"));
+```js
+const multer = require("multer");
+
+const storage = multer.memoryStorage();
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed"), false);
     }
+  },
+});
 
-    next();
-  } catch (error) {
-    return next(createError(401, "Not authorized, token failed"));
-  }
-};
-
-module.exports = protect;
+module.exports = upload;
 ```
 
 **What's happening:**
-- `req.cookies.token` — reads the JWT from the HTTP-only cookie
-- `jwt.verify()` — decodes the token and checks if it's valid/expired
-- `User.findById(decoded.id)` — finds the user from the ID stored in the token
-- `req.user` — attaches the user object so any route after this can use it
-- If anything fails, the user gets a 401 (Unauthorized) error
+- `memoryStorage()` — keeps the file in memory (as a Buffer) instead of saving to disk
+- `fileSize: 5MB` — rejects files larger than 5MB
+- `fileFilter` — only allows image files (png, jpg, etc.)
 
-### Step 2: Create a test protected route
+### Step 4: Update `controllers/userController.js`
 
-Add a "get my profile" route to test the middleware. Create `controllers/userController.js`:
+Add `updateProfile` and `updateProfilePicture` functions:
 
 ```js
+const User = require("../models/User");
+const createError = require("../utils/ApiError");
 const sendResponse = require("../utils/ApiResponse");
+const cloudinary = require("../config/cloudinary");
 
 const getMe = async (req, res) => {
   sendResponse(res, 200, req.user, "Profile fetched successfully");
 };
 
-module.exports = { getMe };
+// Update profile (fullName, bio, username)
+const updateProfile = async (req, res, next) => {
+  const { fullName, bio, username } = req.body;
+
+  // If username is being changed, check if it's already taken
+  if (username && username !== req.user.username) {
+    const existingUser = await User.findOne({ username });
+    if (existingUser) {
+      return next(createError(400, "Username is already taken"));
+    }
+  }
+
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user._id,
+    { fullName, bio, username },
+    { new: true, runValidators: true }
+  );
+
+  sendResponse(res, 200, updatedUser, "Profile updated successfully");
+};
+
+// Upload / update profile picture
+const updateProfilePicture = async (req, res, next) => {
+  if (!req.file) {
+    return next(createError(400, "Please upload an image"));
+  }
+
+  // Upload to Cloudinary from buffer
+  const result = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "snapsphere/profiles", transformation: [{ width: 400, height: 400, crop: "fill" }] },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+    stream.end(req.file.buffer);
+  });
+
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user._id,
+    { profilePicture: result.secure_url },
+    { new: true }
+  );
+
+  sendResponse(res, 200, updatedUser, "Profile picture updated successfully");
+};
+
+module.exports = { getMe, updateProfile, updateProfilePicture };
 ```
 
-### Step 3: Create `routes/userRoutes.js`
+**What's happening:**
+- **updateProfile** — updates text fields; checks for duplicate username before updating
+- **updateProfilePicture** — receives image via Multer, uploads to Cloudinary using a stream (since file is in memory), saves the Cloudinary URL to the user's `profilePicture` field
+- `crop: "fill"` with 400x400 — Cloudinary auto-crops and resizes the image to a square
+
+### Step 5: Update `routes/userRoutes.js`
 
 ```js
 const express = require("express");
-const { getMe } = require("../controllers/userController");
+const { getMe, updateProfile, updateProfilePicture } = require("../controllers/userController");
 const protect = require("../middlewares/authMiddleware");
+const upload = require("../middlewares/upload");
 
 const router = express.Router();
 
 router.get("/me", protect, getMe);
+router.put("/profile", protect, updateProfile);
+router.put("/profile-picture", protect, upload.single("profilePicture"), updateProfilePicture);
 
 module.exports = router;
 ```
 
-### Step 4: Update `server.js`
+**What's happening:**
+- `PUT /profile` — update text fields (protected)
+- `PUT /profile-picture` — upload image (protected, uses Multer middleware)
+- `upload.single("profilePicture")` — expects a single file with field name `profilePicture`
 
-Add the user routes below your auth routes:
+### Step 6: Test with Postman or Thunder Client
 
-```js
-const userRoutes = require("./routes/userRoutes");
-
-app.use("/api/users", userRoutes);
-```
-
-### Step 5: Test with Postman or Thunder Client
-
-**Step A — Login first** (to get the cookie):
-- Method: `POST`
-- URL: `http://localhost:3000/api/auth/login`
+**Test Update Profile:**
+- Method: `PUT`
+- URL: `http://localhost:3000/api/users/profile`
+- Login first to get cookie
 - Body (JSON):
 ```json
 {
-  "email": "sahil@test.com",
-  "password": "test123"
+  "fullName": "Sahil T",
+  "bio": "Backend developer",
+  "username": "sahil"
 }
 ```
 
-**Step B — Get profile** (cookie is sent automatically):
-- Method: `GET`
-- URL: `http://localhost:3000/api/users/me`
+**Test Upload Profile Picture:**
+- Method: `PUT`
+- URL: `http://localhost:3000/api/users/profile-picture`
+- Body: `form-data` (not JSON!)
+  - Key: `profilePicture` (type: File)
+  - Value: select an image file
 
-You should get back your user data. If you try `/me` without logging in first, you should get a 401 error.
+You should get back the updated user with a Cloudinary URL in `profilePicture`.
 
-**Step C — Logout then try again:**
-- `POST /api/auth/logout`
-- Then `GET /api/users/me` — should return 401
-
-If all tests pass — Task 6 is done!
+If both work — Task 7 is done!
 
 ---
 
-> ✅ Once done, tell me and I'll add Task 7 (User Profile — Update & Upload).
+> ✅ Once done, tell me and I'll add Task 8 (Post Model & CRUD).
