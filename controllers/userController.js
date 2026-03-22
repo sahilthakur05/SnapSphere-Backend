@@ -150,12 +150,12 @@ const toggleFollow = async (req, res, next) => {
   if (isFollowing) {
     // Unfollow
     await User.findByIdAndUpdate(req.user._id, { $pull: { following: targetId } });
-    await User.findByIdAndUpdate(targetId, { $pull: { followers: req.user._id } });
-    sendResponse(res, 200, { message: "Unfollowed successfully" }, "Unfollowed successfully");
+    const updated = await User.findByIdAndUpdate(targetId, { $pull: { followers: req.user._id } }, { new: true });
+    sendResponse(res, 200, { message: "Unfollowed successfully", followers: updated.followers }, "Unfollowed successfully");
   } else {
     // Follow
     await User.findByIdAndUpdate(req.user._id, { $addToSet: { following: targetId } });
-    await User.findByIdAndUpdate(targetId, { $addToSet: { followers: req.user._id } });
+    const updated = await User.findByIdAndUpdate(targetId, { $addToSet: { followers: req.user._id } }, { new: true });
 
     await Notification.create({
       recipient: targetId,
@@ -163,7 +163,7 @@ const toggleFollow = async (req, res, next) => {
       type: "follow",
     });
 
-    sendResponse(res, 200, { message: "Followed successfully" }, "Followed successfully");
+    sendResponse(res, 200, { message: "Followed successfully", followers: updated.followers }, "Followed successfully");
   }
 };
 

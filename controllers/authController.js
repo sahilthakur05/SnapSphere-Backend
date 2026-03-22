@@ -21,11 +21,14 @@ const register = async (req, res, next) => {
     res,
     201,
     {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
       token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        avatar: user.profilePicture || "",
+      },
     },
     "User registered successfully",
   );
@@ -53,11 +56,14 @@ const login = async (req, res, next) => {
     res,
     200,
     {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
       token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        avatar: user.profilePicture || "",
+      },
     },
     "Login successful",
   );
