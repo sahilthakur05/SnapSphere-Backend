@@ -97,7 +97,8 @@ const refreshToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    // Allow refresh within 5 minutes after expiry, reject anything older
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { clockTolerance: 300 });
     const user = await User.findById(decoded.id);
     if (!user) {
       return next(createError(401, "User not found"));
@@ -161,7 +162,33 @@ const deleteAccount = async (req, res, next) => {
     return next(createError(401, "Password is incorrect"));
   }
 
-  await User.findByIdAndDelete(req.user._id);
+  const userId = req.user._id;
+
+  // Clean up all user-related data before deleting account
+  const Post = require("../models/Post");
+  const Comment = require("../models/Comment");
+  const Story = require("../models/Story");
+  const Message = require("../models/Message");
+  const Notification = require("../models/Notification");
+  const SavedPost = require("../models/SavedPost");
+  const Report = require("../models/Report");
+
+  // Delete comments on user's posts, then delete user's posts
+  const userPosts = await Post.find({ user: userId }).select("_id");
+  const postIds = userPosts.map((p) => p._id);
+  await Comment.deleteMany({ $or: [{ user: userId }, { post: { $in: postIds } }] });
+  await SavedPost.deleteMany({ $or: [{ user: userId }, { post: { $in: postIds } }] });
+  await Report.deleteMany({ $or: [{ reporter: userId }, { post: { $in: postIds } }] });
+  await Notification.deleteMany({ $or: [{ recipient: userId }, { sender: userId }] });
+  await Post.deleteMany({ user: userId });
+  await Story.deleteMany({ user: userId });
+  await Message.deleteMany({ $or: [{ sender: userId }, { recipient: userId }] });
+
+  // Remove user from other users' followers/following lists
+  await User.updateMany({ followers: userId }, { $pull: { followers: userId } });
+  await User.updateMany({ following: userId }, { $pull: { following: userId } });
+
+  await User.findByIdAndDelete(userId);
 
   res.cookie("token", "", { httpOnly: true, expires: new Date(0) });
   sendResponse(res, 200, null, "Account deleted successfully");

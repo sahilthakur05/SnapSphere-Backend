@@ -6,58 +6,54 @@ const sendResponse = require("../utils/ApiResponse");
 // GET /messages — list all conversations (latest message per user)
 const getConversations = async (req, res, next) => {
   const userId = req.user._id;
+  const mongoose = require("mongoose");
 
-  const messages = await Message.find({
-    $or: [{ sender: userId }, { recipient: userId }],
-  })
-    .sort({ createdAt: -1 })
-    .populate("sender", "username fullName profilePicture")
-    .populate("recipient", "username fullName profilePicture")
-    .populate("story", "image")
-    .lean();
+  // Use aggregation to group by conversation partner and get the latest message
+  const conversations = await Message.aggregate([
+    // 1. Find all messages involving this user
+    { $match: { $or: [{ sender: userId }, { recipient: mongoose.Types.ObjectId.createFromHexString(userId.toString()) }] } },
+    // 2. Sort newest first
+    { $sort: { createdAt: -1 } },
+    // 3. Compute partnerId
+    { $addFields: {
+      partnerId: { $cond: { if: { $eq: ["$sender", userId] }, then: "$recipient", else: "$sender" } },
+    }},
+    // 4. Group by partner, keep latest message and count unread
+    { $group: {
+      _id: "$partnerId",
+      lastMessage: { $first: "$$ROOT" },
+      unreadCount: { $sum: {
+        $cond: [{ $and: [{ $ne: ["$sender", userId] }, { $eq: ["$read", false] }] }, 1, 0],
+      }},
+    }},
+    // 5. Sort by latest message time
+    { $sort: { "lastMessage.createdAt": -1 } },
+    // 6. Lookup partner user info
+    { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "partnerInfo" } },
+    { $unwind: "$partnerInfo" },
+    // 7. Lookup story image if present
+    { $lookup: { from: "stories", localField: "lastMessage.story", foreignField: "_id", as: "storyInfo" } },
+  ]);
 
-  // Group by conversation partner, keep only latest message
-  const conversationMap = {};
-  for (const msg of messages) {
-    const partnerId =
-      msg.sender._id.toString() === userId.toString()
-        ? msg.recipient._id.toString()
-        : msg.sender._id.toString();
+  const formatted = conversations.map((c) => ({
+    user: {
+      id: c.partnerInfo._id,
+      username: c.partnerInfo.username,
+      fullName: c.partnerInfo.fullName,
+      avatar: c.partnerInfo.profilePicture,
+    },
+    lastMessage: {
+      id: c.lastMessage._id,
+      text: c.lastMessage.text,
+      image: c.lastMessage.image || null,
+      senderId: c.lastMessage.sender,
+      storyImage: c.storyInfo?.[0]?.image || null,
+      createdAt: c.lastMessage.createdAt,
+    },
+    unreadCount: c.unreadCount,
+  }));
 
-    if (!conversationMap[partnerId]) {
-      const partner =
-        msg.sender._id.toString() === userId.toString()
-          ? msg.recipient
-          : msg.sender;
-
-      const unreadCount = messages.filter(
-        (m) =>
-          m.sender._id.toString() === partnerId &&
-          m.recipient._id.toString() === userId.toString() &&
-          !m.read
-      ).length;
-
-      conversationMap[partnerId] = {
-        user: {
-          id: partner._id,
-          username: partner.username,
-          fullName: partner.fullName,
-          avatar: partner.profilePicture,
-        },
-        lastMessage: {
-          id: msg._id,
-          text: msg.text,
-          image: msg.image || null,
-          senderId: msg.sender._id,
-          storyImage: msg.story?.image || null,
-          createdAt: msg.createdAt,
-        },
-        unreadCount,
-      };
-    }
-  }
-
-  sendResponse(res, 200, Object.values(conversationMap), "Conversations fetched");
+  sendResponse(res, 200, formatted, "Conversations fetched");
 };
 
 // GET /messages/:userId — get messages with a specific user

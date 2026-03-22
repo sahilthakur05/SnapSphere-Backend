@@ -24,10 +24,12 @@ const storySchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       default: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
-      index: { expires: 0 },
+      index: { expireAfterSeconds: 0 },
     },
   },
   { timestamps: true }
 );
+
+storySchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Story", storySchema);

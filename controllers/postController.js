@@ -9,11 +9,10 @@ const cloudinary = require("../config/cloudinary");
 
 // GET /posts/feed?page=1&limit=10
 const getFeed = async (req, res, next) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
   const skip = (page - 1) * limit;
 
-  // Get posts from users the current user follows + own posts
   const following = [...req.user.following, req.user._id];
 
   const posts = await Post.find({ user: { $in: following } })
@@ -26,22 +25,29 @@ const getFeed = async (req, res, next) => {
   const hasMore = posts.length > limit;
   if (hasMore) posts.pop();
 
-  // Attach comments to each post
+  // Fetch latest 3 comments per post in one query (avoids N+1)
   const postIds = posts.map((p) => p._id);
-  const comments = await Comment.find({ post: { $in: postIds } })
+  const allComments = await Comment.find({ post: { $in: postIds } })
     .populate("user", "username fullName profilePicture")
-    .sort({ createdAt: 1 })
+    .sort({ createdAt: -1 }) // newest first so we can slice the latest 3
     .lean();
 
   const commentsByPost = {};
-  for (const c of comments) {
-    if (!commentsByPost[c.post]) commentsByPost[c.post] = [];
-    commentsByPost[c.post].push({
-      id: c._id,
-      user: { id: c.user._id, username: c.user.username, avatar: c.user.profilePicture, fullName: c.user.fullName },
-      text: c.text,
-      createdAt: c.createdAt,
-    });
+  for (const c of allComments) {
+    const key = c.post.toString();
+    if (!commentsByPost[key]) commentsByPost[key] = [];
+    if (commentsByPost[key].length < 3) {
+      commentsByPost[key].push({
+        id: c._id,
+        user: { id: c.user._id, username: c.user.username, avatar: c.user.profilePicture, fullName: c.user.fullName },
+        text: c.text,
+        createdAt: c.createdAt,
+      });
+    }
+  }
+  // Reverse to show oldest-first within the 3
+  for (const key of Object.keys(commentsByPost)) {
+    commentsByPost[key].reverse();
   }
 
   const formatted = posts.map((p) => ({
@@ -50,7 +56,7 @@ const getFeed = async (req, res, next) => {
     image: p.image,
     caption: p.caption,
     likes: p.likes,
-    comments: commentsByPost[p._id] || [],
+    comments: commentsByPost[p._id.toString()] || [],
     createdAt: p.createdAt,
   }));
 
@@ -217,35 +223,42 @@ const deletePost = async (req, res, next) => {
   sendResponse(res, 200, { message: "Post deleted successfully" }, "Post deleted successfully");
 };
 
-// PUT /posts/:postId/like — toggle like
+// PUT /posts/:postId/like — toggle like (atomic to prevent race conditions)
 const toggleLike = async (req, res, next) => {
   const post = await Post.findById(req.params.postId);
   if (!post) {
     return next(createError(404, "Post not found"));
   }
 
-  const userId = req.user._id.toString();
-  const index = post.likes.findIndex((id) => id.toString() === userId);
+  const userId = req.user._id;
+  const alreadyLiked = post.likes.some((id) => id.toString() === userId.toString());
 
-  if (index === -1) {
-    post.likes.push(req.user._id);
-    // Send notification if not liking own post (upsert to prevent duplicates)
-    if (post.user.toString() !== userId) {
+  let updated;
+  if (alreadyLiked) {
+    // Atomic remove — safe under concurrency
+    updated = await Post.findByIdAndUpdate(
+      post._id,
+      { $pull: { likes: userId } },
+      { new: true }
+    );
+    await Notification.deleteOne({ recipient: post.user, sender: userId, type: "like", post: post._id });
+  } else {
+    // Atomic add — $addToSet prevents duplicates even with concurrent requests
+    updated = await Post.findByIdAndUpdate(
+      post._id,
+      { $addToSet: { likes: userId } },
+      { new: true }
+    );
+    if (post.user.toString() !== userId.toString()) {
       await Notification.findOneAndUpdate(
-        { recipient: post.user, sender: req.user._id, type: "like", post: post._id },
-        { recipient: post.user, sender: req.user._id, type: "like", post: post._id, read: false },
+        { recipient: post.user, sender: userId, type: "like", post: post._id },
+        { recipient: post.user, sender: userId, type: "like", post: post._id, read: false },
         { upsert: true, new: true }
       );
     }
-  } else {
-    post.likes.splice(index, 1);
-    // Remove the like notification
-    await Notification.deleteOne({ recipient: post.user, sender: req.user._id, type: "like", post: post._id });
   }
 
-  await post.save();
-
-  sendResponse(res, 200, { postId: post._id, likes: post.likes }, "Like toggled successfully");
+  sendResponse(res, 200, { postId: updated._id, likes: updated.likes }, "Like toggled successfully");
 };
 
 // GET /posts/:postId/likes — users who liked
@@ -271,8 +284,12 @@ const getLikes = async (req, res, next) => {
 // POST /posts/:postId/comment
 const addComment = async (req, res, next) => {
   const { text } = req.body;
-  if (!text) {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed) {
     return next(createError(400, "Comment text is required"));
+  }
+  if (trimmed.length > 500) {
+    return next(createError(400, "Comment cannot exceed 500 characters"));
   }
 
   const post = await Post.findById(req.params.postId);
@@ -283,7 +300,7 @@ const addComment = async (req, res, next) => {
   const comment = await Comment.create({
     post: post._id,
     user: req.user._id,
-    text,
+    text: trimmed,
   });
 
   // Send notification if not commenting on own post (upsert to prevent duplicates)
@@ -365,8 +382,12 @@ const toggleSave = async (req, res, next) => {
 // POST /posts/:postId/report
 const reportPost = async (req, res, next) => {
   const { reason } = req.body;
-  if (!reason) {
+  const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+  if (!trimmedReason) {
     return next(createError(400, "Report reason is required"));
+  }
+  if (trimmedReason.length > 500) {
+    return next(createError(400, "Report reason cannot exceed 500 characters"));
   }
 
   const post = await Post.findById(req.params.postId);
@@ -377,7 +398,7 @@ const reportPost = async (req, res, next) => {
   await Report.create({
     reporter: req.user._id,
     post: post._id,
-    reason,
+    reason: trimmedReason,
   });
 
   sendResponse(res, 201, { message: "Post reported successfully" }, "Post reported successfully");

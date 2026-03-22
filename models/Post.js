@@ -26,4 +26,7 @@ const postSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Index for feed queries (find by user, sort by date)
+postSchema.index({ user: 1, createdAt: -1 });
+
 module.exports = mongoose.model("Post", postSchema);

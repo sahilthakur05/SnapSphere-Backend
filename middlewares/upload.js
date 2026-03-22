@@ -1,13 +1,19 @@
-const multer = require("multer")
-const storage = multer.memoryStorage()
+const multer = require("multer");
+const path = require("path");
+
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const ALLOWED_EXTS = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
+
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_TYPES.includes(file.mimetype) && ALLOWED_EXTS.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error("Only image files are allowed"), false);
+      cb(new Error("Only JPEG, PNG, GIF, and WebP images are allowed"), false);
     }
   },
 });

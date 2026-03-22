@@ -34,5 +34,6 @@ const messageSchema = new mongoose.Schema(
 );
 
 messageSchema.index({ sender: 1, recipient: 1, createdAt: -1 });
+messageSchema.index({ recipient: 1, read: 1 }); // for unread message counts
 
 module.exports = mongoose.model("Message", messageSchema);

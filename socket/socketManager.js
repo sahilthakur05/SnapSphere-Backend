@@ -1,4 +1,5 @@
 const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
 const chatHandler = require("./chatHandler");
 
 let io;
@@ -7,7 +8,7 @@ const onlineUsers = new Map(); // userId -> socketId
 const initSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_URL || true,
+      origin: process.env.FRONTEND_URL || "http://localhost:5173",
       credentials: true,
     },
     transports: ["websocket", "polling"],
@@ -17,12 +18,31 @@ const initSocket = (server) => {
     pingInterval: 25000,
   });
 
-  io.on("connection", (socket) => {
-    const userId = socket.handshake.query.userId;
+  // Authenticate every socket connection using JWT
+  io.use((socket, next) => {
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.query?.token;
 
-    if (userId) {
-      onlineUsers.set(userId, socket.id);
-      io.emit("onlineUsers", Array.from(onlineUsers.keys()));
+    if (!token) {
+      return next(new Error("Authentication required"));
+    }
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.userId = decoded.id; // attach verified userId to socket
+      next();
+    } catch (err) {
+      return next(new Error("Invalid or expired token"));
+    }
+  });
+
+  io.on("connection", (socket) => {
+    const userId = socket.userId; // from verified JWT, not from client query
+
+    onlineUsers.set(userId, socket.id);
+    io.emit("onlineUsers", Array.from(onlineUsers.keys()));
+    if (process.env.NODE_ENV !== "production") {
       console.log(`User connected: ${userId} (${socket.id})`);
     }
 
@@ -30,9 +50,9 @@ const initSocket = (server) => {
     chatHandler(io, socket, onlineUsers);
 
     socket.on("disconnect", () => {
-      if (userId) {
-        onlineUsers.delete(userId);
-        io.emit("onlineUsers", Array.from(onlineUsers.keys()));
+      onlineUsers.delete(userId);
+      io.emit("onlineUsers", Array.from(onlineUsers.keys()));
+      if (process.env.NODE_ENV !== "production") {
         console.log(`User disconnected: ${userId}`);
       }
     });

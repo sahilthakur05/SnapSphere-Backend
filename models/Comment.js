@@ -21,4 +21,7 @@ const commentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Index for fetching comments by post (sorted by date)
+commentSchema.index({ post: 1, createdAt: 1 });
+
 module.exports = mongoose.model("Comment", commentSchema);

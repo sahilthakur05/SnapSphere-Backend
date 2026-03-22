@@ -58,10 +58,13 @@ const searchUsers = async (req, res, next) => {
     return sendResponse(res, 200, [], "No search query");
   }
 
+  // Escape special regex characters to prevent ReDoS attacks
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
   const users = await User.find({
     $or: [
-      { username: { $regex: q, $options: "i" } },
-      { fullName: { $regex: q, $options: "i" } },
+      { username: { $regex: escaped, $options: "i" } },
+      { fullName: { $regex: escaped, $options: "i" } },
     ],
   })
     .limit(20)
@@ -148,14 +151,20 @@ const toggleFollow = async (req, res, next) => {
   const isFollowing = req.user.following.some((id) => id.toString() === targetId);
 
   if (isFollowing) {
-    // Unfollow
-    await User.findByIdAndUpdate(req.user._id, { $pull: { following: targetId } });
-    const updated = await User.findByIdAndUpdate(targetId, { $pull: { followers: req.user._id } }, { new: true });
+    // Unfollow — use bulkWrite to batch both updates together
+    await User.bulkWrite([
+      { updateOne: { filter: { _id: req.user._id }, update: { $pull: { following: targetId } } } },
+      { updateOne: { filter: { _id: targetUser._id }, update: { $pull: { followers: req.user._id } } } },
+    ]);
+    const updated = await User.findById(targetId);
     sendResponse(res, 200, { message: "Unfollowed successfully", followers: updated.followers }, "Unfollowed successfully");
   } else {
-    // Follow
-    await User.findByIdAndUpdate(req.user._id, { $addToSet: { following: targetId } });
-    const updated = await User.findByIdAndUpdate(targetId, { $addToSet: { followers: req.user._id } }, { new: true });
+    // Follow — use bulkWrite to batch both updates together
+    await User.bulkWrite([
+      { updateOne: { filter: { _id: req.user._id }, update: { $addToSet: { following: targetId } } } },
+      { updateOne: { filter: { _id: targetUser._id }, update: { $addToSet: { followers: req.user._id } } } },
+    ]);
+    const updated = await User.findById(targetId);
 
     await Notification.findOneAndUpdate(
       { recipient: targetId, sender: req.user._id, type: "follow" },

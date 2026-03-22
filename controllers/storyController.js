@@ -82,33 +82,32 @@ const createStory = async (req, res, next) => {
   }, "Story created successfully");
 };
 
-// PUT /stories/:storyId/like — like a story (one like per user)
+// PUT /stories/:storyId/like — like a story (atomic, prevents duplicates)
 const likeStory = async (req, res, next) => {
   const story = await Story.findById(req.params.storyId);
   if (!story) {
     return next(createError(404, "Story not found"));
   }
 
-  const userId = req.user._id.toString();
-  const alreadyLiked = story.likes.some((id) => id.toString() === userId);
+  const userId = req.user._id;
 
-  if (alreadyLiked) {
-    return sendResponse(res, 200, { message: "Already liked" }, "Already liked this story");
-  }
-
-  story.likes.push(req.user._id);
-  await story.save();
+  // Atomic $addToSet prevents duplicates even under concurrent requests
+  const updated = await Story.findByIdAndUpdate(
+    story._id,
+    { $addToSet: { likes: userId } },
+    { new: true }
+  );
 
   // Send notification if not liking own story (upsert to prevent duplicates)
-  if (story.user.toString() !== userId) {
+  if (story.user.toString() !== userId.toString()) {
     await Notification.findOneAndUpdate(
-      { recipient: story.user, sender: req.user._id, type: "story_like", story: story._id },
-      { recipient: story.user, sender: req.user._id, type: "story_like", story: story._id, read: false },
+      { recipient: story.user, sender: userId, type: "story_like", story: story._id },
+      { recipient: story.user, sender: userId, type: "story_like", story: story._id, read: false },
       { upsert: true, new: true }
     );
   }
 
-  sendResponse(res, 200, { message: "Story liked", likes: story.likes }, "Story liked");
+  sendResponse(res, 200, { message: "Story liked", likes: updated.likes }, "Story liked");
 };
 
 // POST /stories/:storyId/reply — reply to a story (creates a message)
