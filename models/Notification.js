@@ -33,4 +33,10 @@ const notificationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Prevent duplicate notifications for the same action
+notificationSchema.index(
+  { recipient: 1, sender: 1, type: 1, post: 1, story: 1 },
+  { unique: true, partialFilterExpression: { type: { $exists: true } } }
+);
+
 module.exports = mongoose.model("Notification", notificationSchema);

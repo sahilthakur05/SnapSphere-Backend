@@ -157,11 +157,11 @@ const toggleFollow = async (req, res, next) => {
     await User.findByIdAndUpdate(req.user._id, { $addToSet: { following: targetId } });
     const updated = await User.findByIdAndUpdate(targetId, { $addToSet: { followers: req.user._id } }, { new: true });
 
-    await Notification.create({
-      recipient: targetId,
-      sender: req.user._id,
-      type: "follow",
-    });
+    await Notification.findOneAndUpdate(
+      { recipient: targetId, sender: req.user._id, type: "follow" },
+      { recipient: targetId, sender: req.user._id, type: "follow", read: false },
+      { upsert: true, new: true }
+    );
 
     sendResponse(res, 200, { message: "Followed successfully", followers: updated.followers }, "Followed successfully");
   }

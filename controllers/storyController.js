@@ -99,14 +99,13 @@ const likeStory = async (req, res, next) => {
   story.likes.push(req.user._id);
   await story.save();
 
-  // Send notification if not liking own story
+  // Send notification if not liking own story (upsert to prevent duplicates)
   if (story.user.toString() !== userId) {
-    await Notification.create({
-      recipient: story.user,
-      sender: req.user._id,
-      type: "story_like",
-      story: story._id,
-    });
+    await Notification.findOneAndUpdate(
+      { recipient: story.user, sender: req.user._id, type: "story_like", story: story._id },
+      { recipient: story.user, sender: req.user._id, type: "story_like", story: story._id, read: false },
+      { upsert: true, new: true }
+    );
   }
 
   sendResponse(res, 200, { message: "Story liked", likes: story.likes }, "Story liked");

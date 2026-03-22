@@ -229,17 +229,18 @@ const toggleLike = async (req, res, next) => {
 
   if (index === -1) {
     post.likes.push(req.user._id);
-    // Send notification if not liking own post
+    // Send notification if not liking own post (upsert to prevent duplicates)
     if (post.user.toString() !== userId) {
-      await Notification.create({
-        recipient: post.user,
-        sender: req.user._id,
-        type: "like",
-        post: post._id,
-      });
+      await Notification.findOneAndUpdate(
+        { recipient: post.user, sender: req.user._id, type: "like", post: post._id },
+        { recipient: post.user, sender: req.user._id, type: "like", post: post._id, read: false },
+        { upsert: true, new: true }
+      );
     }
   } else {
     post.likes.splice(index, 1);
+    // Remove the like notification
+    await Notification.deleteOne({ recipient: post.user, sender: req.user._id, type: "like", post: post._id });
   }
 
   await post.save();
@@ -285,14 +286,13 @@ const addComment = async (req, res, next) => {
     text,
   });
 
-  // Send notification if not commenting on own post
+  // Send notification if not commenting on own post (upsert to prevent duplicates)
   if (post.user.toString() !== req.user._id.toString()) {
-    await Notification.create({
-      recipient: post.user,
-      sender: req.user._id,
-      type: "comment",
-      post: post._id,
-    });
+    await Notification.findOneAndUpdate(
+      { recipient: post.user, sender: req.user._id, type: "comment", post: post._id },
+      { recipient: post.user, sender: req.user._id, type: "comment", post: post._id, read: false },
+      { upsert: true, new: true }
+    );
   }
 
   const populated = await Comment.findById(comment._id).populate("user", "username fullName profilePicture").lean();
