@@ -1,4 +1,5 @@
 const express = require("express");
+const http = require("http");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -18,7 +19,10 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const storyRoutes = require("./routes/storyRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 
+const { initSocket } = require("./socket/socketManager");
+
 const app = express();
+const server = http.createServer(app);
 
 // Middlewares
 app.use(helmet());
@@ -59,8 +63,11 @@ app.use(errorHandler);
 // Connect to database
 connectDB();
 
+// Initialize Socket.IO
+initSocket(server);
+
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
