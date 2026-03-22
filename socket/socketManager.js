@@ -10,6 +10,10 @@ const initSocket = (server) => {
       origin: process.env.FRONTEND_URL || true,
       credentials: true,
     },
+    transports: ["websocket", "polling"],
+    allowUpgrades: true,
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
   io.on("connection", (socket) => {
