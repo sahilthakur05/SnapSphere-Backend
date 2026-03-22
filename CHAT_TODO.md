@@ -1,0 +1,170 @@
+# Real-Time Chat Implementation — Step by Step
+
+Branch: `feature/realtime-chat`
+
+## Current State
+- Messages work via REST API (send, fetch conversations, fetch chat history)
+- Model: `Message` (sender, recipient, text, story, read, timestamps)
+- Frontend: Redux slice with `fetchConversations`, `fetchMessages`, `sendMessage`
+- No real-time — user must refresh to see new messages
+
+---
+
+## BACKEND (SnapSphere-Backend)
+
+### Step 1: Install Socket.IO
+```bash
+npm install socket.io
+```
+
+### Step 2: Create Socket Manager (`socket/socketManager.js`)
+- Create `socket/` folder
+- Create `socketManager.js` that exports `initSocket(server)` and `getIO()`
+- Track online users in a `Map<userId, socketId>`
+- Handle events:
+  - `connection` → add user to online map, broadcast online list
+  - `disconnect` → remove user, broadcast updated online list
+
+### Step 3: Modify `server.js` — Use HTTP Server
+- Replace `app.listen()` with `http.createServer(app)` + `server.listen()`
+- Call `initSocket(server)` after creating HTTP server
+- CORS config for Socket.IO must match Express CORS (use FRONTEND_URL)
+
+### Step 4: Create Socket Event Handlers (`socket/chatHandler.js`)
+Handle these events inside the socket connection:
+- **`sendMessage`** `{ recipientId, text }`
+  - Save message to DB (reuse existing Message model)
+  - Emit `newMessage` to recipient's socket (if online)
+  - Emit `messageSent` back to sender (with saved message data + id)
+- **`typing`** `{ recipientId }`
+  - Emit `userTyping` to recipient's socket
+- **`stopTyping`** `{ recipientId }`
+  - Emit `userStopTyping` to recipient's socket
+- **`markRead`** `{ senderId }`
+  - Update all unread messages from that sender as read in DB
+  - Emit `messagesRead` to the sender's socket
+
+### Step 5: Create Online Status Handler (`socket/onlineHandler.js`)
+- On connect: add to onlineUsers map, emit `userOnline` to all
+- On disconnect: remove from map, emit `userOffline` to all
+- Provide helper: `getOnlineUsers()` → returns array of online user IDs
+
+### Step 6: Add Real-Time Notifications (Optional but nice)
+- When a new like/comment/follow happens in existing controllers:
+  - Import `getIO()` and `onlineUsers`
+  - Emit `newNotification` to the target user's socket if online
+
+---
+
+## FRONTEND (SnapSphere)
+
+### Step 7: Install Socket.IO Client
+```bash
+npm install socket.io-client
+```
+
+### Step 8: Create Socket Service (`src/lib/socket.ts`)
+```
+- connectSocket(userId) → creates socket connection to VITE_SOCKET_URL
+- disconnectSocket() → cleanly disconnects
+- getSocket() → returns the socket instance
+- Auto-reconnect is built into Socket.IO client
+```
+
+### Step 9: Connect Socket on Login/App Load
+- In `App.tsx` or `AppRoutes.tsx`:
+  - When user is authenticated, call `connectSocket(user.id)`
+  - When user logs out, call `disconnectSocket()`
+  - Clean up on unmount
+
+### Step 10: Update `messageSlice.ts` — Add Real-Time Reducers
+Add these new reducers (not async thunks — these are triggered by socket events):
+- `receiveMessage(state, action)` → push message to currentChat if chat is open with that user, also update conversations list
+- `updateTypingStatus(state, action)` → set typing indicator for a user
+- `updateOnlineUsers(state, action)` → store list of online user IDs
+- `markMessagesAsRead(state, action)` → update read status in currentChat
+
+### Step 11: Create Socket Listener Hook (`src/hooks/useSocketListeners.ts`)
+- Listen for socket events and dispatch Redux actions:
+  - `newMessage` → dispatch `receiveMessage`
+  - `userTyping` → dispatch `updateTypingStatus({ userId, typing: true })`
+  - `userStopTyping` → dispatch `updateTypingStatus({ userId, typing: false })`
+  - `onlineUsers` → dispatch `updateOnlineUsers`
+  - `messagesRead` → dispatch `markMessagesAsRead`
+  - `newNotification` → dispatch notification action + show toast
+- Use this hook in the main App/layout component
+
+### Step 12: Update `ChatPage.tsx` — Real-Time Messaging
+- **Send via socket** instead of REST API:
+  - `getSocket().emit("sendMessage", { recipientId, text })`
+  - Remove the REST `sendMessage` thunk call
+- **Typing indicator**:
+  - On input change → emit `typing` event (debounced)
+  - On stop typing → emit `stopTyping` event
+  - Show "typing..." UI when `typingUsers[partnerId]` is true
+- **Auto-scroll** on new message received
+- **Mark as read** → emit `markRead` when chat is opened
+
+### Step 13: Update `MessagesPage.tsx` — Live Conversation List
+- Show online status dot (green) next to users who are online
+- Update last message in real-time when `receiveMessage` fires
+- Update unread count badge in real-time
+
+### Step 14: Update `BottomNav.tsx` / `Navbar.tsx` — Live Unread Badge
+- Unread message count should update in real-time via Redux
+- When `receiveMessage` fires and chat is NOT open → increment unread
+
+---
+
+## FILE CHANGES SUMMARY
+
+### New Files (Backend)
+| File | Purpose |
+|------|---------|
+| `socket/socketManager.js` | Init Socket.IO, manage online users |
+| `socket/chatHandler.js` | Handle sendMessage, typing, markRead events |
+
+### Modified Files (Backend)
+| File | Change |
+|------|--------|
+| `package.json` | Add `socket.io` dependency |
+| `server.js` | Use http.createServer, init socket |
+
+### New Files (Frontend)
+| File | Purpose |
+|------|---------|
+| `src/lib/socket.ts` | Socket connection manager |
+| `src/hooks/useSocketListeners.ts` | Global socket event listeners |
+
+### Modified Files (Frontend)
+| File | Change |
+|------|--------|
+| `package.json` | Add `socket.io-client` dependency |
+| `src/features/message/messageSlice.ts` | Add real-time reducers |
+| `src/pages/ChatPage.tsx` | Send via socket, typing indicator, live messages |
+| `src/pages/MessagesPage.tsx` | Online status, live last message |
+| `src/App.tsx` or `src/routes/AppRoutes.tsx` | Connect socket on auth |
+
+---
+
+## TESTING CHECKLIST
+- [ ] Open two browsers with different accounts
+- [ ] Send message from A → appears instantly on B
+- [ ] Typing indicator shows when A types
+- [ ] Online status shows green dot for logged-in users
+- [ ] Unread badge updates in real-time
+- [ ] Messages marked as read when chat is opened
+- [ ] Reconnects automatically after network drop
+- [ ] Works on mobile browsers
+- [ ] No duplicate messages on reconnect
+- [ ] Existing REST endpoints still work as fallback
+
+---
+
+## ORDER OF IMPLEMENTATION
+1. Backend: Steps 1-5 (socket server setup)
+2. Frontend: Steps 7-8 (socket client setup)
+3. Frontend: Steps 9-11 (connect + listeners)
+4. Frontend: Steps 12-14 (update UI components)
+5. Step 6: Real-time notifications (optional, do last)
+6. Test everything with two browser tabs
