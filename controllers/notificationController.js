@@ -5,6 +5,7 @@ const sendResponse = require("../utils/ApiResponse");
 const getNotifications = async (req, res, next) => {
   const notifications = await Notification.find({ recipient: req.user._id })
     .populate("sender", "username profilePicture")
+    .populate("story", "image")
     .sort({ createdAt: -1 })
     .lean();
 
@@ -19,6 +20,7 @@ const getNotifications = async (req, res, next) => {
       avatar: n.sender.profilePicture,
     },
     postId: n.post || undefined,
+    storyImage: n.story?.image || undefined,
     read: n.read,
     createdAt: n.createdAt,
   }));

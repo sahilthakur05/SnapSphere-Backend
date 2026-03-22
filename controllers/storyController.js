@@ -80,24 +80,34 @@ const createStory = async (req, res, next) => {
   }, "Story created successfully");
 };
 
-// PUT /stories/:storyId/like — like a story (sends notification)
+// PUT /stories/:storyId/like — like a story (one like per user)
 const likeStory = async (req, res, next) => {
   const story = await Story.findById(req.params.storyId);
   if (!story) {
     return next(createError(404, "Story not found"));
   }
 
-  // Don't notify if liking own story
-  if (story.user.toString() !== req.user._id.toString()) {
+  const userId = req.user._id.toString();
+  const alreadyLiked = story.likes.some((id) => id.toString() === userId);
+
+  if (alreadyLiked) {
+    return sendResponse(res, 200, { message: "Already liked" }, "Already liked this story");
+  }
+
+  story.likes.push(req.user._id);
+  await story.save();
+
+  // Send notification if not liking own story
+  if (story.user.toString() !== userId) {
     await Notification.create({
       recipient: story.user,
       sender: req.user._id,
-      type: "like",
-      post: null,
+      type: "story_like",
+      story: story._id,
     });
   }
 
-  sendResponse(res, 200, { message: "Story liked" }, "Story liked");
+  sendResponse(res, 200, { message: "Story liked", likes: story.likes }, "Story liked");
 };
 
 // POST /stories/:storyId/reply — reply to a story (creates a message)
